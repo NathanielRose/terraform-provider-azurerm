@@ -15,7 +15,6 @@ import (
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
-	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
@@ -633,68 +632,63 @@ func resourceArmKubernetesClusterCreateUpdate(d *schema.ResourceData, meta inter
 	resGroup := d.Get("resource_group_name").(string)
 	name := d.Get("name").(string)
 
-	if features.ShouldResourcesBeImported() && d.IsNewResource() {
-		existing, err := client.Get(ctx, resGroup, name)
-		if err != nil {
-			if !utils.ResponseWasNotFound(existing.Response) {
-				return fmt.Errorf("Error checking for presence of existing Kubernetes Cluster %q (Resource Group %q): %s", name, resGroup, err)
-			}
+	existing, err := client.Get(ctx, resGroup, name)
+	if err != nil {
+		if !utils.ResponseWasNotFound(existing.Response) {
+			return fmt.Errorf("Error checking for presence of existing Kubernetes Cluster %q (Resource Group %q): %s", name, resGroup, err)
 		}
-		if requireResourcesToBeImported && d.IsNewResource() {
-			if existing.ID != nil && *existing.ID != "" {
-				return tf.ImportAsExistsError("azurerm_kubernetes_cluster", *existing.ID)
-			}
-		}
-
-		agentProfiles, err := expandKubernetesClusterAgentPoolProfiles(d)
-		if err != nil {
-			return err
-		}
+	}
+	if requireResourcesToBeImported && d.IsNewResource() {
 		if existing.ID != nil && *existing.ID != "" {
-			// TODO handle AgentPoolProfiles update through AgentPool client
-			APclient := meta.(*ArmClient).containers.AgentPoolsClient
-			agentPoolName := *agentProfiles[0].Name
-			resp, err := APclient.Get(ctx, resGroup, name, agentPoolName)
-			if err != nil {
-				if utils.ResponseWasNotFound(resp.Response) {
-					log.Printf("[DEBUG] Managed Kubernetes Cluster %q was not found in Resource Group %q - removing from state!", name, resGroup)
-					d.SetId("")
-					return nil
-				}
+			return tf.ImportAsExistsError("azurerm_kubernetes_cluster", *existing.ID)
+		}
+	}
 
-				return fmt.Errorf("Error retrieving Managed Kubernetes Cluster %q (Resource Group %q): %+v", name, resGroup, err)
-			}
-			// Handle Primary Agent pool Update
-			profile := resp.ManagedClusterAgentPoolProfileProperties
-			//resourceArmKubernetesClusterAgentPoolCreateUpdate
-			profile.Count = agentProfiles[0].Count
-
-			agentProfile := convertKubernetesClusterAgentPoolProfileToKubernetesClusterAgentPoolProfileProperties(agentProfiles[0])
-
-			parameters := containerservice.AgentPool{
-				Name:                                     &name,
-				ManagedClusterAgentPoolProfileProperties: &agentProfile,
+	agentProfiles, err := expandKubernetesClusterAgentPoolProfiles(d)
+	if err != nil {
+		return err
+	}
+	if existing.ID != nil && *existing.ID != "" {
+		// TODO handle AgentPoolProfiles update through AgentPool client
+		APclient := meta.(*ArmClient).containers.AgentPoolsClient
+		agentPoolName := *agentProfiles[0].Name
+		resp, err := APclient.Get(ctx, resGroup, name, agentPoolName)
+		if err != nil {
+			if utils.ResponseWasNotFound(resp.Response) {
+				log.Printf("[DEBUG] Managed Kubernetes Cluster %q was not found in Resource Group %q - removing from state!", name, resGroup)
+				d.SetId("")
+				return nil
 			}
 
-			future, err := APclient.CreateOrUpdate(ctx, resGroup, name, agentPoolName, parameters)
-			if err != nil {
-				return fmt.Errorf("Error creating/updating Managed Kubernetes Cluster Agent Pool %q (Resource Group %q): %+v", agentPoolName, resGroup, err)
-			}
-			if err = future.WaitForCompletionRef(ctx, client.Client); err != nil {
-				return fmt.Errorf("Error waiting for completion of Managed Kubernetes Cluster Agent Pool %q (Resource Group %q): %+v", agentPoolName, resGroup, err)
-			}
+			return fmt.Errorf("Error retrieving Managed Kubernetes Cluster %q (Resource Group %q): %+v", name, resGroup, err)
+		}
+		// Handle Primary Agent pool Update
+		profile := resp.ManagedClusterAgentPoolProfileProperties
+		//resourceArmKubernetesClusterAgentPoolCreateUpdate
+		profile.Count = agentProfiles[0].Count
 
-			read, err := client.Get(ctx, resGroup, name)
-			if err != nil {
-				return fmt.Errorf("Error retrieving Managed Kubernetes Cluster %q (Resource Group %q): %+v", name, resGroup, err)
-			}
+		agentProfile := convertKubernetesClusterAgentPoolProfileToKubernetesClusterAgentPoolProfileProperties(agentProfiles[0])
 
-			if read.ID == nil {
-				return fmt.Errorf("Cannot read ID for Managed Kubernetes Cluster %q (Resource Group %q)", name, resGroup)
-			}
+		parameters := containerservice.AgentPool{
+			Name:                                     &name,
+			ManagedClusterAgentPoolProfileProperties: &agentProfile,
+		}
 
-			resourceArmKubernetesClusterRead(d, meta)
-			d.SetId(*read.ID)
+		future, err := APclient.CreateOrUpdate(ctx, resGroup, name, agentPoolName, parameters)
+		if err != nil {
+			return fmt.Errorf("Error creating/updating Managed Kubernetes Cluster Agent Pool %q (Resource Group %q): %+v", agentPoolName, resGroup, err)
+		}
+		if err = future.WaitForCompletionRef(ctx, client.Client); err != nil {
+			return fmt.Errorf("Error waiting for completion of Managed Kubernetes Cluster Agent Pool %q (Resource Group %q): %+v", agentPoolName, resGroup, err)
+		}
+
+		read, err := client.Get(ctx, resGroup, name)
+		if err != nil {
+			return fmt.Errorf("Error retrieving Managed Kubernetes Cluster %q (Resource Group %q): %+v", name, resGroup, err)
+		}
+
+		if read.ID == nil {
+			return fmt.Errorf("Cannot read ID for Managed Kubernetes Cluster %q (Resource Group %q)", name, resGroup)
 		}
 
 		err = resourceArmKubernetesClusterRead(d, meta)
